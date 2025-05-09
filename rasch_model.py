@@ -9,7 +9,7 @@ st.set_page_config(layout="wide", page_title="Rasch Model Visualizer")
 
 # Sample data from the example
 data = {
-    "Student": ["Alice", "Bob", "Charlie", "Dana"],
+    "Student": ["Ali", "Vali", "Salim", "Aziz"],
     "Q1: 5 × 6 = ?": [1, 1, 0, 1],
     "Q2: 12 ÷ 3 = ?": [1, 1, 0, 1],
     "Q3: (3 + 2)^2 = ?": [1, 0, 0, 1],
