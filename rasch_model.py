@@ -1,15 +1,21 @@
-import streamlit as st
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from scipy.special import expit
+import streamlit as st # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+import numpy as np # type: ignore
+import pandas as pd # type: ignore
+from scipy.special import expit # type: ignore
+from scipy.stats import norm # type: ignore
+import warnings
+
+# aaaSuppress specific warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Set page config
-st.set_page_config(layout="wide", page_title="Rasch Model Visualizer")
+st.set_page_config(layout="wide", page_title="Enhanced Rasch Model Visualizer")
 
 # Sample data from the example
 data = {
-    "Student": ["Ali", "Vali", "Salim", "Aziz"],
+    "Student": ["Ali", "Vali", "Salim", "Diyor"],
     "Q1: 5 × 6 = ?": [1, 1, 0, 1],
     "Q2: 12 ÷ 3 = ?": [1, 1, 0, 1],
     "Q3: (3 + 2)^2 = ?": [1, 0, 0, 1],
@@ -21,25 +27,15 @@ def calculate_rasch_parameters(df):
     # Calculate item difficulties
     item_difficulties = {}
     for item in df.columns[1:]:
-        p_i = df[item].mean()
-        if p_i == 0:
-            delta_i = 5  # Arbitrary high value for impossible items
-        elif p_i == 1:
-            delta_i = -5  # Arbitrary low value for trivial items
-        else:
-            delta_i = np.log((1 - p_i) / p_i)
+        p_i = np.clip(df[item].mean(), 0.0001, 0.9999)  # Clip to avoid 0 or 1
+        delta_i = np.log((1 - p_i) / p_i)
         item_difficulties[item] = delta_i
     
     # Calculate person abilities
     person_abilities = {}
     for _, row in df.iterrows():
-        p_n = row[1:].mean()
-        if p_n == 0:
-            beta_n = -5  # Arbitrary low value for lowest ability
-        elif p_n == 1:
-            beta_n = 5  # Arbitrary high value for highest ability
-        else:
-            beta_n = np.log(p_n / (1 - p_n))
+        p_n = np.clip(row[1:].mean(), 0.0001, 0.9999)  # Clip to avoid 0 or 1
+        beta_n = np.log(p_n / (1 - p_n))
         person_abilities[row["Student"]] = beta_n
     
     return item_difficulties, person_abilities
@@ -59,7 +55,7 @@ def plot_rasch_curve(ability, difficulties, student_name, responses):
     # Item markers and probabilities
     for i, (item, delta) in enumerate(difficulties.items()):
         prob = expit(ability - delta)
-        marker_color = 'green' if responses[i+1] == 1 else 'red'
+        marker_color = 'green' if responses.iloc[i+1] == 1 else 'red'
         item_label = item.split(':')[0] if ':' in item else item
         ax.plot(delta, prob, 'o', markersize=10, color=marker_color,
                 markeredgecolor='black', label=f"{item_label} (δ={delta:.2f})")
@@ -79,12 +75,36 @@ def plot_rasch_curve(ability, difficulties, student_name, responses):
     
     st.pyplot(fig)
 
+def calculate_improvement_stats(student_score, total_possible):
+    current_percent = (student_score / total_possible) * 100
+    needed_points = total_possible - student_score
+    
+    # Calculate Z-score for current performance
+    mean_score = total_possible * 0.7  # Assuming average is 70% of total
+    std_dev = total_possible * 0.15    # Assuming standard deviation of 15% of total
+    z_score = (student_score - mean_score) / std_dev
+    
+    # Calculate percentile
+    percentile = norm.cdf(z_score) * 100
+    
+    # Calculate probability of reaching 100%
+    prob_reach_100 = norm.sf((total_possible - mean_score) / std_dev) * 100
+    
+    return {
+        "current_percent": current_percent,
+        "needed_points": needed_points,
+        "z_score": z_score,
+        "percentile": percentile,
+        "prob_reach_100": prob_reach_100
+    }
+
 def main():
-    st.title("📊 Rasch Model Visualization Tool")
+    st.title("📊 Enhanced Rasch Model Visualization Tool")
     
     # Create DataFrame
     df = pd.DataFrame(data)
     df["Total Correct"] = df.iloc[:, 1:].sum(axis=1)
+    total_questions = len(df.columns) - 2  # Exclude Student and Total Correct columns
     
     # Calculate Rasch parameters
     item_difficulties, person_abilities = calculate_rasch_parameters(df)
@@ -117,7 +137,7 @@ def main():
         st.dataframe(person_df.style.format("{:.3f}"), height=200)
     
     with col2:
-        st.subheader("Probability Analysis")
+        st.subheader("Performance Analysis")
         
         # Select student
         selected_student = st.selectbox("Select Student", df["Student"])
@@ -125,12 +145,12 @@ def main():
         if selected_student:
             ability = person_abilities[selected_student]
             responses = df[df["Student"] == selected_student].iloc[0]
+            current_score = responses["Total Correct"]
             
             # Calculate probabilities
             prob_data = []
             for i, (item, delta) in enumerate(item_difficulties.items()):
                 prob = expit(ability - delta)
-                # Handle item names with or without colons
                 item_parts = item.split(':')
                 item_name = item_parts[0] if len(item_parts) > 1 else item
                 question_text = item_parts[1].strip() if len(item_parts) > 1 else ""
@@ -140,8 +160,8 @@ def main():
                     "Question": question_text,
                     "Difficulty (δ)": delta,
                     "P(X=1)": prob,
-                    "Actual Response": "Correct" if responses[i+1] == 1 else "Incorrect",
-                    "Fit": "✓" if (prob > 0.5) == (responses[i+1] == 1) else "✗"
+                    "Actual Response": "Correct" if responses.iloc[i+1] == 1 else "Incorrect",
+                    "Fit": "✓" if (prob > 0.5) == (responses.iloc[i+1] == 1) else "✗"
                 })
             
             prob_df = pd.DataFrame(prob_data)
@@ -158,8 +178,54 @@ def main():
             
             # Plot the curve
             plot_rasch_curve(ability, item_difficulties, selected_student, responses)
-    
-
+            
+            # Improvement statistics
+            st.subheader("Improvement Analysis")
+            
+            stats = calculate_improvement_stats(current_score, total_questions)
+            
+            col_a, col_b, col_c = st.columns(3)
+            
+            with col_a:
+                st.metric("Current Score", f"{current_score}/{total_questions}", 
+                          f"{stats['current_percent']:.1f}%")
+            
+            with col_b:
+                st.metric("Points Needed for 100%", stats['needed_points'])
+            
+            with col_c:
+                st.metric("Percentile Rank", f"{stats['percentile']:.1f}%")
+            
+            # Improvement recommendations
+            st.subheader("Improvement Recommendations")
+            
+            # Identify easiest missed questions
+            missed_questions = []
+            for i, (item, delta) in enumerate(item_difficulties.items()):
+                if responses.iloc[i+1] == 0:  # If question was missed
+                    missed_questions.append({
+                        "Question": item,
+                        "Difficulty": delta,
+                        "Probability": expit(ability - delta)
+                    })
+            
+            # Sort by easiest first (highest probability of success)
+            missed_questions.sort(key=lambda x: -x["Probability"])
+            
+            if missed_questions:
+                st.write("**Focus on these questions to improve your score:**")
+                for i, q in enumerate(missed_questions[:3]):  # Show top 3 recommendations
+                    st.write(f"{i+1}. **{q['Question']}** (Difficulty: {q['Difficulty']:.2f}, "
+                            f"Your success probability: {q['Probability']*100:.1f}%)")
+            else:
+                st.success("Congratulations! You've answered all questions correctly.")
+            
+            # Probability of reaching 100%
+            st.write(f"**Probability of reaching 100% based on current performance:** "
+                   f"{stats['prob_reach_100']:.2f}%")
 
 if __name__ == "__main__":
     main()
+
+
+
